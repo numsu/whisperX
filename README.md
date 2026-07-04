@@ -38,7 +38,7 @@ This repository provides fast automatic speech recognition (70x realtime with la
 - ⚡️ Batched inference for 70x realtime transcription using whisper large-v2
 - 🪶 [faster-whisper](https://github.com/guillaumekln/faster-whisper) backend, requires <8GB gpu memory for large-v2 with beam_size=5
 - 🎯 Accurate word-level timestamps using wav2vec2 alignment
-- 👯‍♂️ Multispeaker ASR using speaker diarization from [pyannote-audio](https://github.com/pyannote/pyannote-audio) (speaker ID labels)
+- 👯‍♂️ Multispeaker ASR using speaker diarization from [DiariZen](https://github.com/BUTSpeechFIT/DiariZen) (speaker ID labels)
 - 🗣️ VAD preprocessing, reduces hallucination & batching with no WER degradation
 
 **Whisper** is an ASR model [developed by OpenAI](https://github.com/openai/whisper), trained on a large dataset of diverse audio. Whilst it does produces highly accurate transcriptions, the corresponding timestamps are at the utterance-level, not per word, and can be inaccurate by several seconds. OpenAI's whisper does not natively support batching.
@@ -113,7 +113,7 @@ You may also need to install ffmpeg, rust etc. Follow openAI instructions here h
 
 ### Speaker Diarization
 
-To **enable Speaker Diarization**, include your Hugging Face access token (read) that you can generate from [Here](https://huggingface.co/settings/tokens) after the `--hf_token` argument and accept the user agreement for the [speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) model.
+To **enable Speaker Diarization**, add the `--diarize` argument. WhisperX uses the DiariZen `BUT-FIT/diarizen-wavlm-large-s80-md-v2` model by default.
 
 <h2 align="left" id="example">Usage 💬 (command line)</h2>
 
@@ -194,7 +194,7 @@ print(result["segments"]) # after alignment
 # import gc; import torch; gc.collect(); torch.cuda.empty_cache(); del model_a
 
 # 3. Assign speaker labels
-diarize_model = DiarizationPipeline(token=YOUR_HF_TOKEN, device=device)
+diarize_model = DiarizationPipeline(device=device)
 
 # add min/max number of speakers if known
 diarize_segments = diarize_model(audio)
@@ -284,11 +284,11 @@ This work, and my PhD, is supported by the [VGG (Visual Geometry Group)](https:/
 
 Of course, this is builds on [openAI's whisper](https://github.com/openai/whisper).
 Borrows important alignment code from [PyTorch tutorial on forced alignment](https://pytorch.org/tutorials/intermediate/forced_alignment_with_torchaudio_tutorial.html)
-And uses the wonderful pyannote VAD / Diarization https://github.com/pyannote/pyannote-audio
+And uses [Silero VAD](https://github.com/snakers4/silero-vad) for voice activity detection and [DiariZen](https://github.com/BUTSpeechFIT/DiariZen) for diarization.
 
 Valuable VAD & Diarization Models from:
 
-- [pyannote-audio](https://github.com/pyannote/pyannote-audio) — Speaker diarization powered by the [speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) model, licensed under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) by [pyannoteAI](https://www.pyannote.ai)
+- [DiariZen](https://github.com/BUTSpeechFIT/DiariZen) — Speaker diarization powered by the [BUT-FIT/diarizen-wavlm-large-s80-md-v2](https://huggingface.co/BUT-FIT/diarizen-wavlm-large-s80-md-v2) model
 - [silero-vad](https://github.com/snakers4/silero-vad)
 
 Great backend from [faster-whisper](https://github.com/guillaumekln/faster-whisper) and [CTranslate2](https://github.com/OpenNMT/CTranslate2)

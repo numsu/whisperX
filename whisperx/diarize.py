@@ -1,10 +1,11 @@
 import numpy as np
 import pandas as pd
-from pyannote.audio import Pipeline
 from typing import Optional, Union, List, Tuple
 import torch
+import torchaudio
+from io import BytesIO
 
-from whisperx.audio import load_audio, SAMPLE_RATE
+from whisperx.audio import SAMPLE_RATE
 from whisperx.schema import TranscriptionResult, AlignedTranscriptionResult, ProgressCallback
 from whisperx.log_utils import get_logger
 
@@ -92,15 +93,17 @@ class DiarizationPipeline:
     def __init__(
         self,
         model_name=None,
-        token=None,
         device: Optional[Union[str, torch.device]] = "cpu",
         cache_dir=None,
     ):
         if isinstance(device, str):
             device = torch.device(device)
-        model_config = model_name or "pyannote/speaker-diarization-community-1"
+        model_config = model_name or "BUT-FIT/diarizen-wavlm-large-s80-md-v2"
         logger.info(f"Loading diarization model: {model_config}")
-        self.model = Pipeline.from_pretrained(model_config, token=token, cache_dir=cache_dir).to(device)
+        from diarizen.pipelines.inference import DiariZenPipeline
+
+        self.model = DiariZenPipeline.from_pretrained(model_config, cache_dir=cache_dir)
+        self.model.to(device)
 
     def __call__(
         self,
@@ -108,11 +111,8 @@ class DiarizationPipeline:
         num_speakers: Optional[int] = None,
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
-        return_embeddings: bool = False,
         progress_callback: ProgressCallback = None,
-        return_overlaps: bool = False,
-        return_exclusive: bool = False,
-    ) -> Union[pd.DataFrame, tuple[object, ...]]:
+    ) -> pd.DataFrame:
         """
         Perform speaker diarization on audio.
 
@@ -121,86 +121,42 @@ class DiarizationPipeline:
             num_speakers: Exact number of speakers (if known)
             min_speakers: Minimum number of speakers to detect
             max_speakers: Maximum number of speakers to detect
-            return_embeddings: Whether to return speaker embeddings
             progress_callback: Optional callable receiving a float (0-100) with progress percentage
-            return_overlaps: Whether to return overlapping speech intervals
-            return_exclusive: Whether to return exclusive speaker diarization
 
         Returns:
-            Diarization dataframe by default. When any optional return is requested,
-            returns a tuple where values are ordered as:
-            (diarization dataframe, speaker embeddings, overlap dataframe, exclusive diarization dataframe).
-            Optional values are included only when their corresponding return_* flag is True.
+            Diarization dataframe.
         """
+        input_audio: Union[str, BytesIO]
         if isinstance(audio, str):
-            audio = load_audio(audio)
-        audio_data = {
-            'waveform': torch.from_numpy(audio[None, :]),
-            'sample_rate': SAMPLE_RATE
-        }
+            input_audio = audio
+        else:
+            input_audio = BytesIO()
+            waveform = torch.from_numpy(audio[None, :])
+            torchaudio.save(input_audio, waveform, SAMPLE_RATE, format="wav")
+            input_audio.seek(0)
 
-        hook = None
         if progress_callback is not None:
-            # pyannote's diarization has two progress-trackable steps, each with
-            # its own completed/total counter that resets between steps. Map each
-            # step into a sub-range so progress is monotonic and meaningful.
-            _STEP_RANGES = {
-                "segmentation": (0.0, 50.0),
-                "embeddings": (50.0, 99.0),
-            }
-            last_pct = [0.0]
-            def hook(step_name, step_artifact, file=None, total=None, completed=None):
-                if total is not None and completed is not None and total > 0:
-                    offset, end = _STEP_RANGES.get(step_name, (0.0, 99.0))
-                    pct = offset + min(completed / total, 1.0) * (end - offset)
-                    if pct > last_pct[0]:
-                        last_pct[0] = pct
-                        progress_callback(pct)
+            progress_callback(0.0)
 
-        output = self.model(
-            audio_data,
-            num_speakers=num_speakers,
-            min_speakers=min_speakers,
-            max_speakers=max_speakers,
-            **({"hook": hook} if hook is not None else {}),
-        )
+        previous_min_speakers = self.model.min_speakers
+        previous_max_speakers = self.model.max_speakers
+        if num_speakers is not None:
+            self.model.min_speakers = num_speakers
+            self.model.max_speakers = num_speakers
+        if min_speakers is not None:
+            self.model.min_speakers = min_speakers
+        if max_speakers is not None:
+            self.model.max_speakers = max_speakers
 
+        try:
+            diarization = self.model(input_audio)
+        finally:
+            self.model.min_speakers = previous_min_speakers
+            self.model.max_speakers = previous_max_speakers
         if progress_callback is not None:
             progress_callback(100.0)
 
-        diarization = output.speaker_diarization
-        embeddings = output.speaker_embeddings if return_embeddings else None
-
-        diarize_df = self._diarization_to_dataframe(diarization)
-
-        overlap_df = None
-        if return_overlaps:
-            overlap_timeline = diarization.get_overlap()
-            overlap_df = pd.DataFrame(
-                [{"start": segment.start, "end": segment.end} for segment in overlap_timeline],
-                columns=["start", "end"],
-            )
-
-        exclusive_diarize_df = None
-        if return_exclusive:
-            exclusive_diarize_df = self._diarization_to_dataframe(output.exclusive_speaker_diarization)
-
-        speaker_embeddings = None
-        if return_embeddings and embeddings is not None:
-            speaker_embeddings = {speaker: embeddings[s].tolist() for s, speaker in enumerate(diarization.labels())}
-
-        # For backwards compatibility
-        if not return_embeddings and not return_overlaps and not return_exclusive:
-            return diarize_df
-
-        result: list[object] = [diarize_df]
-        if return_embeddings:
-            result.append(speaker_embeddings)
-        if return_overlaps:
-            result.append(overlap_df)
-        if return_exclusive:
-            result.append(exclusive_diarize_df)
-        return tuple(result)
+        return self._diarization_to_dataframe(diarization)
 
     @staticmethod
     def _diarization_to_dataframe(diarization) -> pd.DataFrame:

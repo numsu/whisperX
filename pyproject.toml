@@ -15,12 +15,14 @@ dependencies = [
     "numpy>=2.1.0",
     "omegaconf>=2.3.0",
     "pandas>=2.2.3",
-    "pyannote-audio>=4.0.0",
+    "scipy>=1.15.0",
+    "diarizen @ git+https://github.com/BUTSpeechFIT/DiariZen.git",
     "huggingface-hub>=0.28.1",
     "torch~=2.8.0",
     "torchaudio~=2.8.0",
     "torchvision~=0.23.0",
     "torchcodec>=0.6.0,<0.8.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'darwin' or sys_platform == 'win32'",
+    "toml>=0.10.2",
     "transformers>=4.48.0",
     "triton>=3.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'" # only install triton on x86_64 Linux
 ]
@@ -42,7 +44,6 @@ include-package-data = true
 where = ["."]
 include = ["whisperx*"]
 
-# torchcodec (transitive dep of pyannote-audio >=4) has no wheels for Linux aarch64
 [tool.uv]
 exclude-newer = "1 week"
 override-dependencies = [
