@@ -94,7 +94,6 @@ class DiarizationPipeline:
         self,
         model_name=None,
         device: Optional[Union[str, torch.device]] = "cpu",
-        cache_dir=None,
     ):
         if isinstance(device, str):
             device = torch.device(device)
@@ -102,7 +101,7 @@ class DiarizationPipeline:
         logger.info(f"Loading diarization model: {model_config}")
         from diarizen.pipelines.inference import DiariZenPipeline
 
-        self.model = DiariZenPipeline.from_pretrained(model_config, cache_dir=cache_dir)
+        self.model = DiariZenPipeline.from_pretrained(model_config)
         self.model.to(device)
 
     def __call__(
