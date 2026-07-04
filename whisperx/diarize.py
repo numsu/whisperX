@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 from typing import Optional, Union, List, Tuple
 import torch
 import torchaudio
@@ -17,6 +18,22 @@ def _ensure_numpy_pyannote_compatibility():
         np.NaN = np.nan
     if not hasattr(np, "NAN"):
         np.NAN = np.nan
+
+
+def _speaker_label(speaker) -> str:
+    if isinstance(speaker, (int, np.integer)):
+        return f"SPEAKER_{speaker:02d}"
+    return str(speaker)
+
+
+def _speaker_embeddings_from_clusters(embeddings, hard_clusters) -> dict[str, list[float]]:
+    speaker_embeddings = {}
+    for cluster in sorted(k for k in np.unique(hard_clusters) if k >= 0):
+        cluster_embeddings = embeddings[hard_clusters == cluster]
+        if len(cluster_embeddings) == 0:
+            continue
+        speaker_embeddings[_speaker_label(cluster)] = np.mean(cluster_embeddings, axis=0).tolist()
+    return speaker_embeddings
 
 
 class IntervalTree:
@@ -109,7 +126,74 @@ class DiarizationPipeline:
         _ensure_numpy_pyannote_compatibility()
         from diarizen.pipelines.inference import DiariZenPipeline
 
-        self.model = DiariZenPipeline.from_pretrained(model_config)
+        class DiariZenPipelineWithEmbeddings(DiariZenPipeline):
+            def __call__(self, in_wav, sess_name=None):
+                from pyannote.audio.utils.signal import Binarize
+                from pyannote.database.protocol.protocol import ProtocolFile
+                from scipy.ndimage import median_filter
+
+                assert isinstance(in_wav, (str, BytesIO, ProtocolFile)), \
+                    f"input must be either a str, BytesIO or a ProtocolFile; there was {type(in_wav)}"
+                in_wav = in_wav if not isinstance(in_wav, ProtocolFile) else in_wav['audio']
+
+                print('Extracting segmentations.')
+                waveform, sample_rate = torchaudio.load(in_wav)
+                waveform = torch.unsqueeze(waveform[0], 0)
+                audio_data = {"waveform": waveform, "sample_rate": sample_rate}
+                segmentations = self.get_segmentations(audio_data, soft=False)
+
+                if self.apply_median_filtering:
+                    segmentations.data = median_filter(segmentations.data, size=(1, 11, 1), mode='reflect')
+
+                binarized_segmentations = segmentations
+                count = self.speaker_count(
+                    binarized_segmentations,
+                    self._segmentation.model._receptive_field,
+                    warm_up=(0.0, 0.0),
+                )
+
+                print("Extracting Embeddings.")
+                embeddings = self.get_embeddings(
+                    audio_data,
+                    binarized_segmentations,
+                    exclude_overlap=self.embedding_exclude_overlap,
+                )
+
+                print("Clustering.")
+                hard_clusters, _, _ = self.clustering(
+                    embeddings=embeddings,
+                    segmentations=binarized_segmentations,
+                    min_clusters=self.min_speakers,
+                    max_clusters=self.max_speakers
+                )
+                self.speaker_embeddings_ = _speaker_embeddings_from_clusters(embeddings, hard_clusters)
+
+                count.data = np.minimum(count.data, self.max_speakers).astype(np.int8)
+                inactive_speakers = np.sum(binarized_segmentations.data, axis=1) == 0
+                hard_clusters[inactive_speakers] = -2
+                discrete_diarization, _ = self.reconstruct(
+                    segmentations,
+                    hard_clusters,
+                    count,
+                )
+
+                to_annotation = Binarize(
+                    onset=0.5,
+                    offset=0.5,
+                    min_duration_on=0.0,
+                    min_duration_off=0.0
+                )
+                result = to_annotation(discrete_diarization)
+                result.uri = sess_name
+
+                if self.rttm_out_dir is not None:
+                    assert sess_name is not None
+                    rttm_out = os.path.join(self.rttm_out_dir, sess_name + ".rttm")
+                    with open(rttm_out, "w") as f:
+                        f.write(result.to_rttm())
+                return result
+
+        self.model = DiariZenPipelineWithEmbeddings.from_pretrained(model_config)
         self.model.to(device)
 
     def __call__(
@@ -118,8 +202,9 @@ class DiarizationPipeline:
         num_speakers: Optional[int] = None,
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
+        return_embeddings: bool = False,
         progress_callback: ProgressCallback = None,
-    ) -> pd.DataFrame:
+    ) -> Union[pd.DataFrame, tuple[pd.DataFrame, dict[str, list[float]]]]:
         """
         Perform speaker diarization on audio.
 
@@ -128,10 +213,12 @@ class DiarizationPipeline:
             num_speakers: Exact number of speakers (if known)
             min_speakers: Minimum number of speakers to detect
             max_speakers: Maximum number of speakers to detect
+            return_embeddings: Whether to return speaker embeddings
             progress_callback: Optional callable receiving a float (0-100) with progress percentage
 
         Returns:
-            Diarization dataframe.
+            Diarization dataframe. When return_embeddings is True, returns
+            (diarization dataframe, speaker embeddings).
         """
         input_audio: Union[str, BytesIO]
         if isinstance(audio, str):
@@ -163,11 +250,15 @@ class DiarizationPipeline:
         if progress_callback is not None:
             progress_callback(100.0)
 
-        return self._diarization_to_dataframe(diarization)
+        diarize_df = self._diarization_to_dataframe(diarization)
+        if return_embeddings:
+            return diarize_df, self.model.speaker_embeddings_
+        return diarize_df
 
     @staticmethod
     def _diarization_to_dataframe(diarization) -> pd.DataFrame:
         diarize_df = pd.DataFrame(diarization.itertracks(yield_label=True), columns=['segment', 'label', 'speaker'])
+        diarize_df['speaker'] = diarize_df['speaker'].apply(_speaker_label)
         diarize_df['start'] = diarize_df['segment'].apply(lambda x: x.start)
         diarize_df['end'] = diarize_df['segment'].apply(lambda x: x.end)
         return diarize_df
