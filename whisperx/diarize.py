@@ -36,6 +36,14 @@ def _speaker_embeddings_from_clusters(embeddings, hard_clusters) -> dict[str, li
     return speaker_embeddings
 
 
+def _overlaps_to_dataframe(diarization) -> pd.DataFrame:
+    overlap_timeline = diarization.get_overlap()
+    return pd.DataFrame(
+        [{"start": segment.start, "end": segment.end} for segment in overlap_timeline],
+        columns=["start", "end"],
+    )
+
+
 class IntervalTree:
     """
     Simple interval tree for fast overlap queries using sorted array + binary search.
@@ -203,8 +211,9 @@ class DiarizationPipeline:
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
         return_embeddings: bool = False,
+        return_overlaps: bool = False,
         progress_callback: ProgressCallback = None,
-    ) -> Union[pd.DataFrame, tuple[pd.DataFrame, dict[str, list[float]]]]:
+    ) -> Union[pd.DataFrame, tuple[object, ...]]:
         """
         Perform speaker diarization on audio.
 
@@ -214,11 +223,13 @@ class DiarizationPipeline:
             min_speakers: Minimum number of speakers to detect
             max_speakers: Maximum number of speakers to detect
             return_embeddings: Whether to return speaker embeddings
+            return_overlaps: Whether to return overlapping speech intervals
             progress_callback: Optional callable receiving a float (0-100) with progress percentage
 
         Returns:
-            Diarization dataframe. When return_embeddings is True, returns
-            (diarization dataframe, speaker embeddings).
+            Diarization dataframe. When optional returns are requested, values are
+            returned as a tuple ordered as:
+            (diarization dataframe, speaker embeddings, overlap dataframe).
         """
         input_audio: Union[str, BytesIO]
         if isinstance(audio, str):
@@ -251,9 +262,15 @@ class DiarizationPipeline:
             progress_callback(100.0)
 
         diarize_df = self._diarization_to_dataframe(diarization)
+        if not return_embeddings and not return_overlaps:
+            return diarize_df
+
+        result: list[object] = [diarize_df]
         if return_embeddings:
-            return diarize_df, self.model.speaker_embeddings_
-        return diarize_df
+            result.append(self.model.speaker_embeddings_)
+        if return_overlaps:
+            result.append(_overlaps_to_dataframe(diarization))
+        return tuple(result)
 
     @staticmethod
     def _diarization_to_dataframe(diarization) -> pd.DataFrame:
