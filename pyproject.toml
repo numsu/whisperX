@@ -10,13 +10,16 @@ license = { text = "BSD-2-Clause" }
 
 dependencies = [
     "ctranslate2>=4.5.0",
+    "accelerate>=1.12.0",
     "faster-whisper>=1.2.0",
     "nltk>=3.9.1",
-    "numpy>=2.1.0",
+    "numpy>=1.26.0,<2.0.0",
     "omegaconf>=2.3.0",
     "pandas>=2.2.3",
     "scipy>=1.15.0",
     "diarizen @ git+https://github.com/BUTSpeechFIT/DiariZen.git",
+    "pyannote-audio",
+    "psutil>=7.0.0",
     "huggingface-hub>=0.28.1",
     "torch~=2.8.0",
     "torchaudio~=2.8.0",
@@ -54,6 +57,7 @@ override-dependencies = [
 exclude-newer = "1 week"
 
 [tool.uv.sources]
+pyannote-audio = { git = "https://github.com/BUTSpeechFIT/DiariZen.git", subdirectory = "pyannote-audio" }
 torch = [
   { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
   { index = "pytorch-cpu", marker = "platform_machine != 'x86_64' and platform_machine != 'AMD64' and sys_platform != 'darwin'" },
