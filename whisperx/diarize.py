@@ -12,6 +12,11 @@ from whisperx.log_utils import get_logger
 logger = get_logger(__name__)
 
 
+def _ensure_numpy_pyannote_compatibility():
+    if not hasattr(np, "NaN"):
+        np.NaN = np.nan
+
+
 class IntervalTree:
     """
     Simple interval tree for fast overlap queries using sorted array + binary search.
@@ -99,6 +104,7 @@ class DiarizationPipeline:
             device = torch.device(device)
         model_config = model_name or "BUT-FIT/diarizen-wavlm-large-s80-md-v2"
         logger.info(f"Loading diarization model: {model_config}")
+        _ensure_numpy_pyannote_compatibility()
         from diarizen.pipelines.inference import DiariZenPipeline
 
         self.model = DiariZenPipeline.from_pretrained(model_config)
