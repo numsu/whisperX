@@ -15,6 +15,8 @@ logger = get_logger(__name__)
 def _ensure_numpy_pyannote_compatibility():
     if not hasattr(np, "NaN"):
         np.NaN = np.nan
+    if not hasattr(np, "NAN"):
+        np.NAN = np.nan
 
 
 class IntervalTree:
